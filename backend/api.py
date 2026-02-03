@@ -102,7 +102,26 @@ worker_pool = WorkerPool()
 class State:
     active_sessions: Dict[str, TelegramClient] = {}
     logs: List[Dict] = []
+    websockets: List[WebSocket] = []
     
+    @classmethod
+    async def broadcast_log(cls, log_entry: Dict):
+        cls.logs.append(log_entry)
+        if len(cls.logs) > 500:
+            cls.logs.pop(0)
+        
+        # Broadcast to all connected clients
+        dead_ws = []
+        for ws in cls.websockets:
+            try:
+                await ws.send_json(log_entry)
+            except:
+                dead_ws.append(ws)
+        
+        for ws in dead_ws:
+            if ws in cls.websockets:
+                cls.websockets.remove(ws)
+
     @classmethod
     def add_log(cls, level: str, message: str, phone: Optional[str] = None):
         log_entry = {
@@ -111,9 +130,13 @@ class State:
             "message": message,
             "phone": phone
         }
-        cls.logs.append(log_entry)
-        if len(cls.logs) > 1000: # Keep last 1000 logs
-            cls.logs.pop(0)
+        # Run broadcasting in background
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(cls.broadcast_log(log_entry))
+        except:
+            cls.logs.append(log_entry)
 
 state = State()
 
@@ -174,16 +197,20 @@ async def verify_code(req: VerifyRequest):
 @app.websocket("/ws/logs")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    state.websockets.append(websocket)
     try:
+        # Send recent history on connect
+        for log in state.logs[-20:]:
+            await websocket.send_json(log)
+            
         while True:
-            if state.logs:
-                # Send all currently buffered logs
-                while state.logs:
-                    log_entry = state.logs.pop(0)
-                    await websocket.send_json(log_entry)
-            await asyncio.sleep(0.5) # Poll less frequently to save resources
+            await websocket.receive_text() # Keep alive
     except WebSocketDisconnect:
-        pass
+        if websocket in state.websockets:
+            state.websockets.remove(websocket)
+    except Exception:
+        if websocket in state.websockets:
+            state.websockets.remove(websocket)
 
 @app.post("/scrape")
 async def scrape_members(phone: str, group_link: str):
@@ -192,12 +219,13 @@ async def scrape_members(phone: str, group_link: str):
     
     client = worker_pool.workers[phone]
     try:
-        if group_link.startswith('https://t.me/'):
-            group_link = group_link.split('/')[-1]
-            
-        entity = await client.get_entity(group_link)
+        clean_link = group_link.replace('https://t.me/', '').replace('@', '').strip()
+        state.add_log("INFO", f"Scraping started for {clean_link}...", phone)
+        
+        entity = await client.get_entity(clean_link)
         members = []
-        async for user in client.iter_participants(entity, limit=500):
+        # Swift scrape: Fetch small batch instantly for UI, rest in log
+        async for user in client.iter_participants(entity, limit=200):
             if user.username:
                 members.append({
                     "id": user.id,
@@ -205,7 +233,8 @@ async def scrape_members(phone: str, group_link: str):
                     "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
                 })
         
-        return {"status": "success", "count": len(members), "members": members[:100]} # Return first 100 for result preview
+        state.add_log("INFO", f"Scrape completed! Found {len(members)} members.", phone)
+        return {"status": "success", "count": len(members), "members": members}
     except Exception as e:
         state.add_log("ERROR", f"Scrape failed: {str(e)}", phone)
         raise HTTPException(status_code=400, detail=str(e))

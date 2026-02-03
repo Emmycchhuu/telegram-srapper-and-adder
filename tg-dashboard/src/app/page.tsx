@@ -43,19 +43,35 @@ export default function Dashboard() {
   const [errorPrompt, setErrorPrompt] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
   const WS_BASE = API_BASE.startsWith("https")
     ? API_BASE.replace("https", "wss")
     : API_BASE.replace("http", "ws");
 
   useEffect(() => {
-    // WebSocket for logs
-    const ws = new WebSocket(`${WS_BASE}/ws/logs`);
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setLogs((prev) => [...prev, data]);
+    let ws: WebSocket;
+    let reconnectTimer: any;
+
+    const connect = () => {
+      ws = new WebSocket(`${WS_BASE}/ws/logs`);
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        setLogs((prev) => {
+          const newLogs = [...prev, data];
+          return newLogs.slice(-200); // Keep buffer manageable
+        });
+      };
+      ws.onclose = () => {
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+      ws.onerror = () => ws.close();
     };
-    return () => ws.close();
+
+    connect();
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    };
   }, [WS_BASE]);
 
   useEffect(() => {
@@ -104,10 +120,17 @@ export default function Dashboard() {
 
   const handleScrape = async () => {
     setIsScraping(true);
+    setErrorPrompt(null);
     try {
       const res = await fetch(`${API_BASE}/scrape?phone=${phone}&group_link=${sourceGroup}`, { method: "POST" });
       const data = await res.json();
-      if (res.ok) setScrapedMembers(data.members);
+      if (res.ok) {
+        setScrapedMembers(data.members);
+      } else {
+        setErrorPrompt(data.detail || "Scrape failed. Check group link.");
+      }
+    } catch (e) {
+      setErrorPrompt("Connection Error during scraping.");
     } finally {
       setIsScraping(false);
     }
@@ -115,12 +138,19 @@ export default function Dashboard() {
 
   const handleAdd = async () => {
     setIsAdding(true);
+    setErrorPrompt(null);
     try {
-      await fetch(`${API_BASE}/add?target_group=${targetGroup}`, {
+      const res = await fetch(`${API_BASE}/add?target_group=${targetGroup}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(scrapedMembers)
       });
+      if (!res.ok) {
+        const data = await res.json();
+        setErrorPrompt(data.detail || "Adding failed.");
+      }
+    } catch (e) {
+      setErrorPrompt("Connection Error during adding.");
     } finally {
       setIsAdding(false);
     }
