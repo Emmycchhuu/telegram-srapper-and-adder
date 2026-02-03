@@ -1,0 +1,20 @@
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.log
+**/sessions/
+**/.env
+**/output/
+
+# Next.js
+**/frontend/.next/
+**/frontend/node_modules/
+**/frontend/.env.local
+**/tg-dashboard/.next/
+**/tg-dashboard/node_modules/
+**/tg-dashboard/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
