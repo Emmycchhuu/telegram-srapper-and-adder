@@ -41,6 +41,7 @@ export default function Dashboard() {
 
   const [activeSection, setActiveSection] = useState("Dashboard");
   const [errorPrompt, setErrorPrompt] = useState<string | null>(null);
+  const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -53,7 +54,9 @@ export default function Dashboard() {
     let reconnectTimer: any;
 
     const connect = () => {
+      setWsStatus("connecting");
       ws = new WebSocket(`${WS_BASE}/ws/logs`);
+      ws.onopen = () => setWsStatus("connected");
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         setLogs((prev) => {
@@ -62,6 +65,7 @@ export default function Dashboard() {
         });
       };
       ws.onclose = () => {
+        setWsStatus("disconnected");
         reconnectTimer = setTimeout(connect, 3000);
       };
       ws.onerror = () => ws.close();
@@ -291,6 +295,13 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2">
                   <Icons.Terminal />
                   <span className="text-xs font-mono font-bold tracking-widest text-gray-400">REALTIME_LOG_STREAM</span>
+                  <div className={`flex items-center gap-1.5 ml-4 px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-tighter ${wsStatus === "connected" ? "bg-green-500/10 border-green-500/20 text-green-500" :
+                      wsStatus === "connecting" ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-500 animate-pulse" :
+                        "bg-red-500/10 border-red-500/20 text-red-500"
+                    }`}>
+                    <div className={`w-1.5 h-1.5 rounded-full ${wsStatus === "connected" ? "bg-green-500" : wsStatus === "connecting" ? "bg-yellow-500" : "bg-red-500"}`}></div>
+                    {wsStatus}
+                  </div>
                 </div>
                 <button onClick={() => setLogs([])} className="text-[10px] uppercase font-bold text-gray-500 hover:text-white transition-colors">Clear Buffer</button>
               </div>

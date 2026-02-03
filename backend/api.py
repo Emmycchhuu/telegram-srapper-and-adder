@@ -103,24 +103,29 @@ class State:
     active_sessions: Dict[str, TelegramClient] = {}
     logs: List[Dict] = []
     websockets: List[WebSocket] = []
+    log_queue: asyncio.Queue = asyncio.Queue()
     
     @classmethod
-    async def broadcast_log(cls, log_entry: Dict):
-        cls.logs.append(log_entry)
-        if len(cls.logs) > 500:
-            cls.logs.pop(0)
-        
-        # Broadcast to all connected clients
-        dead_ws = []
-        for ws in cls.websockets:
-            try:
-                await ws.send_json(log_entry)
-            except:
-                dead_ws.append(ws)
-        
-        for ws in dead_ws:
-            if ws in cls.websockets:
-                cls.websockets.remove(ws)
+    async def log_processor(cls):
+        """Background task to broadcast logs from the queue."""
+        while True:
+            log_entry = await cls.log_queue.get()
+            cls.logs.append(log_entry)
+            if len(cls.logs) > 500:
+                cls.logs.pop(0)
+            
+            # Broadcast to all connected clients
+            dead_ws = []
+            for ws in cls.websockets:
+                try:
+                    await ws.send_json(log_entry)
+                except:
+                    dead_ws.append(ws)
+            
+            for ws in dead_ws:
+                if ws in cls.websockets:
+                    cls.websockets.remove(ws)
+            cls.log_queue.task_done()
 
     @classmethod
     def add_log(cls, level: str, message: str, phone: Optional[str] = None):
@@ -130,11 +135,13 @@ class State:
             "message": message,
             "phone": phone
         }
-        # Run broadcasting in background
+        # Safely put into queue (even from sync code)
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                loop.create_task(cls.broadcast_log(log_entry))
+                loop.create_task(cls.log_queue.put(log_entry))
+            else:
+                cls.logs.append(log_entry)
         except:
             cls.logs.append(log_entry)
 
@@ -162,6 +169,8 @@ class VerifyRequest(BaseModel):
 async def startup_event():
     if not os.path.exists("sessions"):
         os.makedirs("sessions")
+    # Start log processor in background
+    asyncio.create_task(state.log_processor())
     state.add_log("INFO", "Engine starting up in cloud environment...")
 
 @app.get("/health")
@@ -220,20 +229,25 @@ async def scrape_members(phone: str, group_link: str):
     client = worker_pool.workers[phone]
     try:
         clean_link = group_link.replace('https://t.me/', '').replace('@', '').strip()
-        state.add_log("INFO", f"Scraping started for {clean_link}...", phone)
+        state.add_log("INFO", f"Resolving entity for: {clean_link}...", phone)
         
         entity = await client.get_entity(clean_link)
+        state.add_log("INFO", f"Entity resolved. Starting swift scrape of {entity.title if hasattr(entity, 'title') else clean_link}", phone)
+        
         members = []
-        # Swift scrape: Fetch small batch instantly for UI, rest in log
-        async for user in client.iter_participants(entity, limit=200):
+        count = 0
+        async for user in client.iter_participants(entity, limit=500):
             if user.username:
                 members.append({
                     "id": user.id,
                     "username": user.username,
                     "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
                 })
+            count += 1
+            if count % 100 == 0:
+                state.add_log("DEBUG", f"Scraped {count} members so far...", phone)
         
-        state.add_log("INFO", f"Scrape completed! Found {len(members)} members.", phone)
+        state.add_log("INFO", f"Scrape completed! Total: {len(members)} users found.", phone)
         return {"status": "success", "count": len(members), "members": members}
     except Exception as e:
         state.add_log("ERROR", f"Scrape failed: {str(e)}", phone)
