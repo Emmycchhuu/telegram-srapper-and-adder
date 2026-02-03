@@ -107,6 +107,24 @@ class State:
     scraped_data: Dict[str, List[Dict]] = {} # phone -> members list
     scrape_status: Dict[str, str] = {} # phone -> "idle" | "scraping" | "completed" | "error"
     
+    def __init__(self):
+        # Load scraped data from disk if exists
+        try:
+            if os.path.exists("scraped_members.json"):
+                with open("scraped_members.json", "r") as f:
+                    data = json.load(f)
+                    self.scraped_data = data
+                    print("Loaded persisted scraped data.")
+        except Exception as e:
+            print(f"Failed to load scraped data: {e}")
+            
+    def save_scraped_data(self):
+        try:
+            with open("scraped_members.json", "w") as f:
+                json.dump(self.scraped_data, f)
+        except Exception as e:
+            print(f"Failed to save scraped data: {e}")
+    
     @classmethod
     async def log_processor(cls):
         """Background task to broadcast logs from the queue."""
@@ -254,43 +272,53 @@ async def scrape_members(req: ScrapeRequest):
     if req.phone not in worker_pool.workers:
         raise HTTPException(status_code=400, detail="Worker not authenticated")
     
+    state.add_log("INFO", f"Received scrape request for {req.group_link}", req.phone)
     # Run in background
     asyncio.create_task(background_scrape(req.phone, req.group_link))
-    return {"status": "started", "message": "Scraping started in background"}
+    return {"status": "started", "message": "Background scrape started"}
 
 async def background_scrape(phone: str, group_link: str):
     client = worker_pool.workers[phone]
     state.scrape_status[phone] = "scraping"
     state.scraped_data[phone] = []
+    state.add_log("DEBUG", "Background task initialized...", phone)
     
     try:
         clean_link = group_link.replace('https://t.me/', '').replace('@', '').strip()
         state.add_log("INFO", f"Resolving entity for: {clean_link}...", phone)
         
-        entity = await client.get_entity(clean_link)
-        state.add_log("INFO", f"Entity resolved. Starting swift scrape of {entity.title if hasattr(entity, 'title') else clean_link}", phone)
+        try:
+            entity = await client.get_entity(clean_link)
+        except ValueError:
+             state.add_log("ERROR", "Could not find group. Join it first if private.", phone)
+             state.scrape_status[phone] = "error"
+             return
+
+        state.add_log("INFO", f"Entity resolved: {entity.title if hasattr(entity, 'title') else 'Unknown'}. Starting fetch...", phone)
         
         members = []
         count = 0
-        async for user in client.iter_participants(entity, limit=2000): # Increased limit for background
-            if user.username:
+        async for user in client.iter_participants(entity, limit=None): # Remove limit for full scrape
+            if user.username or (user.first_name): # Lenient filter
                 member_data = {
                     "id": user.id,
                     "username": user.username,
-                    "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
+                    "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+                    "access_hash": user.access_hash
                 }
                 members.append(member_data)
             count += 1
-            if count % 100 == 0:
-                state.add_log("DEBUG", f"Scraped {count} members so far...", phone)
+            if count % 50 == 0:
+                state.add_log("DEBUG", f"Fetched {count} members...", phone)
         
         state.scraped_data[phone] = members
+        state.save_scraped_data() # Persist to disk
         state.scrape_status[phone] = "completed"
-        state.add_log("INFO", f"Scrape completed! Total: {len(members)} qualified users found.", phone)
+        state.add_log("INFO", f"Scrape DONE! Saved {len(members)} members.", phone)
         
     except Exception as e:
         state.scrape_status[phone] = "error"
-        state.add_log("ERROR", f"Scrape failed: {str(e)}", phone)
+        state.add_log("ERROR", f"Scrape crashed: {str(e)}", phone)
 
 @app.get("/scrape/results")
 async def get_scrape_results(phone: str):
