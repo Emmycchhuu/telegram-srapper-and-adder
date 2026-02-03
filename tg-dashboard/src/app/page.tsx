@@ -82,6 +82,31 @@ export default function Dashboard() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
+  // Check for existing session
+  const checkSession = async () => {
+    if (!phone || !apiId || !apiHash) {
+      setErrorPrompt("Please enter Phone, API ID, and Hash to resume session.");
+      return;
+    }
+    setErrorPrompt(null);
+    try {
+      const res = await fetch(`${API_BASE}/auth/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, api_id: apiId, api_hash: apiHash })
+      });
+      if (res.ok) {
+        setIsAuth(true);
+        setErrorPrompt(null); // Clear any previous errors
+      } else {
+        const err = await res.json();
+        setErrorPrompt(err.detail || "No active session found. Please login.");
+      }
+    } catch (e) {
+      setErrorPrompt("Connection Error: Could not check session.");
+    }
+  };
+
   const handleSendCode = async () => {
     setErrorPrompt(null);
     try {
@@ -223,7 +248,10 @@ export default function Dashboard() {
                       <input type="text" placeholder="Phone (+123...)" value={phone} onChange={e => setPhone(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-600 transition-all font-mono text-sm" />
                       <input type="text" placeholder="API ID" value={apiId} onChange={e => setApiId(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-600 transition-all font-mono text-sm" />
                       <input type="password" placeholder="API Hash" value={apiHash} onChange={e => setApiHash(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-600 transition-all font-mono text-sm" />
-                      <button onClick={handleSendCode} className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all shadow-lg shadow-blue-600/30 active:scale-95">Send OTP Code</button>
+                      <div className="flex gap-2">
+                        <button onClick={handleSendCode} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all shadow-lg shadow-blue-600/30 active:scale-95">Send OTP Code</button>
+                        <button onClick={checkSession} className="px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-bold transition-all text-xs uppercase tracking-wider" title="Resume Session">Resume</button>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -296,8 +324,8 @@ export default function Dashboard() {
                   <Icons.Terminal />
                   <span className="text-xs font-mono font-bold tracking-widest text-gray-400">REALTIME_LOG_STREAM</span>
                   <div className={`flex items-center gap-1.5 ml-4 px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-tighter ${wsStatus === "connected" ? "bg-green-500/10 border-green-500/20 text-green-500" :
-                      wsStatus === "connecting" ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-500 animate-pulse" :
-                        "bg-red-500/10 border-red-500/20 text-red-500"
+                    wsStatus === "connecting" ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-500 animate-pulse" :
+                      "bg-red-500/10 border-red-500/20 text-red-500"
                     }`}>
                     <div className={`w-1.5 h-1.5 rounded-full ${wsStatus === "connected" ? "bg-green-500" : wsStatus === "connecting" ? "bg-yellow-500" : "bg-red-500"}`}></div>
                     {wsStatus}

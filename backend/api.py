@@ -203,6 +203,28 @@ async def verify_code(req: VerifyRequest):
         state.add_log("ERROR", f"Verification failed: {str(e)}", req.phone)
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/auth/session")
+async def check_session(req: AccountRequest):
+    """Check if a session file exists and is valid."""
+    session_path = f"sessions/{req.phone}.session"
+    if not os.path.exists(session_path):
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        client = TelegramClient(f"sessions/{req.phone}", req.api_id, req.api_hash)
+        await client.connect()
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            raise HTTPException(status_code=401, detail="Session expired")
+            
+        me = await client.get_me()
+        await worker_pool.add_worker(req.phone, client)
+        state.active_sessions[req.phone] = client
+        return {"status": "authenticated", "user": me.username}
+    except Exception as e:
+        state.add_log("ERROR", f"Session check failed: {str(e)}", req.phone)
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.websocket("/ws/logs")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -258,8 +280,11 @@ async def add_members(target_group: str, members: List[Dict]):
     if not worker_pool.workers:
         raise HTTPException(status_code=400, detail="No authenticated workers available")
     
+    clean_target = target_group.replace('https://t.me/', '').replace('@', '').strip()
+    state.add_log("INFO", f"Initiating Swift Add process for target: {clean_target} with {len(members)} members", "SYSTEM")
+    
     # Run in background
-    asyncio.create_task(worker_pool.start_swifting(target_group, members))
+    asyncio.create_task(worker_pool.start_swifting(clean_target, members))
     return {"status": "swift_process_started", "workers_active": len(worker_pool.workers)}
 
 @app.get("/status")
