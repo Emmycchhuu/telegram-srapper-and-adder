@@ -150,17 +150,40 @@ export default function Dashboard() {
   const handleScrape = async () => {
     setIsScraping(true);
     setErrorPrompt(null);
+    setScrapedMembers([]);
+
     try {
+      // 1. Start the scrape job
       const res = await fetch(`${API_BASE}/scrape?phone=${phone}&group_link=${sourceGroup}`, { method: "POST" });
       const data = await res.json();
-      if (res.ok) {
-        setScrapedMembers(data.members);
-      } else {
-        setErrorPrompt(data.detail || "Scrape failed. Check group link.");
+
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to start scraping");
       }
-    } catch (e) {
-      setErrorPrompt("Connection Error during scraping.");
-    } finally {
+
+      // 2. Poll for results
+      const pollInterval = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`${API_BASE}/scrape/results?phone=${phone}`);
+          const pollData = await pollRes.json();
+
+          if (pollData.status === "completed") {
+            clearInterval(pollInterval);
+            setScrapedMembers(pollData.members);
+            setIsScraping(false);
+          } else if (pollData.status === "error") {
+            clearInterval(pollInterval);
+            setIsScraping(false);
+            setErrorPrompt("Scraping failed during background process. Check logs.");
+          }
+          // If "scraping" or "idle", keep polling...
+        } catch (e) {
+          console.error("Polling error", e);
+        }
+      }, 2000);
+
+    } catch (e: any) {
+      setErrorPrompt(e.message || "Connection Error during scraping.");
       setIsScraping(false);
     }
   };

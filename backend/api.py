@@ -104,6 +104,8 @@ class State:
     logs: List[Dict] = []
     websockets: List[WebSocket] = []
     log_queue: asyncio.Queue = asyncio.Queue()
+    scraped_data: Dict[str, List[Dict]] = {} # phone -> members list
+    scrape_status: Dict[str, str] = {} # phone -> "idle" | "scraping" | "completed" | "error"
     
     @classmethod
     async def log_processor(cls):
@@ -248,7 +250,15 @@ async def scrape_members(phone: str, group_link: str):
     if phone not in worker_pool.workers:
         raise HTTPException(status_code=400, detail="Worker not authenticated")
     
+    # Run in background
+    asyncio.create_task(background_scrape(phone, group_link))
+    return {"status": "started", "message": "Scraping started in background"}
+
+async def background_scrape(phone: str, group_link: str):
     client = worker_pool.workers[phone]
+    state.scrape_status[phone] = "scraping"
+    state.scraped_data[phone] = []
+    
     try:
         clean_link = group_link.replace('https://t.me/', '').replace('@', '').strip()
         state.add_log("INFO", f"Resolving entity for: {clean_link}...", phone)
@@ -258,22 +268,33 @@ async def scrape_members(phone: str, group_link: str):
         
         members = []
         count = 0
-        async for user in client.iter_participants(entity, limit=500):
+        async for user in client.iter_participants(entity, limit=2000): # Increased limit for background
             if user.username:
-                members.append({
+                member_data = {
                     "id": user.id,
                     "username": user.username,
                     "name": f"{user.first_name or ''} {user.last_name or ''}".strip()
-                })
+                }
+                members.append(member_data)
             count += 1
             if count % 100 == 0:
                 state.add_log("DEBUG", f"Scraped {count} members so far...", phone)
         
-        state.add_log("INFO", f"Scrape completed! Total: {len(members)} users found.", phone)
-        return {"status": "success", "count": len(members), "members": members}
+        state.scraped_data[phone] = members
+        state.scrape_status[phone] = "completed"
+        state.add_log("INFO", f"Scrape completed! Total: {len(members)} qualified users found.", phone)
+        
     except Exception as e:
+        state.scrape_status[phone] = "error"
         state.add_log("ERROR", f"Scrape failed: {str(e)}", phone)
-        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/scrape/results")
+async def get_scrape_results(phone: str):
+    return {
+        "status": state.scrape_status.get(phone, "idle"),
+        "count": len(state.scraped_data.get(phone, [])),
+        "members": state.scraped_data.get(phone, [])
+    }
 
 @app.post("/add")
 async def add_members(target_group: str, members: List[Dict]):
