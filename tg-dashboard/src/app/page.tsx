@@ -39,10 +39,14 @@ export default function Dashboard() {
   const [isScraping, setIsScraping] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
 
+  const [activeSection, setActiveSection] = useState("Dashboard");
+  const [errorPrompt, setErrorPrompt] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const WS_BASE = API_BASE.replace("http", "ws");
+  const WS_BASE = API_BASE.startsWith("https")
+    ? API_BASE.replace("https", "wss")
+    : API_BASE.replace("http", "ws");
 
   useEffect(() => {
     // WebSocket for logs
@@ -59,14 +63,21 @@ export default function Dashboard() {
   }, [logs]);
 
   const handleSendCode = async () => {
+    setErrorPrompt(null);
     try {
       const res = await fetch(`${API_BASE}/auth/send-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone, api_id: apiId, api_hash: apiHash })
       });
-      if (res.ok) setStep(2);
+      if (res.ok) {
+        setStep(2);
+      } else {
+        const err = await res.json();
+        setErrorPrompt(err.detail || "Failed to send code");
+      }
     } catch (e) {
+      setErrorPrompt("Connection Error: Check if API is running and URL is correct.");
       console.error(e);
     }
   };
@@ -117,7 +128,11 @@ export default function Dashboard() {
 
         <nav className="flex-1 w-full space-y-2 px-2">
           {["Dashboard", "Accounts", "Groups", "Settings"].map((item) => (
-            <div key={item} className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition-all ${item === "Dashboard" ? "bg-blue-600/10 text-blue-400" : "hover:bg-white/5 text-gray-400"}`}>
+            <div
+              key={item}
+              onClick={() => setActiveSection(item)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition-all ${activeSection === item ? "bg-blue-600/10 text-blue-400" : "hover:bg-white/5 text-gray-400"}`}
+            >
               {item === "Dashboard" && <Icons.Zap />}
               {item === "Accounts" && <Icons.Users />}
               {item === "Groups" && <Icons.Search />}
@@ -153,6 +168,11 @@ export default function Dashboard() {
 
               {!isAuth ? (
                 <div className="space-y-4">
+                  {errorPrompt && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs font-mono">
+                      {errorPrompt}
+                    </div>
+                  )}
                   {step === 1 ? (
                     <>
                       <input type="text" placeholder="Phone (+123...)" value={phone} onChange={e => setPhone(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-600 transition-all font-mono text-sm" />
@@ -164,6 +184,7 @@ export default function Dashboard() {
                     <>
                       <input type="text" placeholder="Verification Code" value={otp} onChange={e => setOtp(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-600 transition-all font-mono text-center text-lg tracking-[0.5em]" />
                       <button onClick={handleVerify} className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all shadow-lg shadow-blue-600/30 active:scale-95">Verify & Connect</button>
+                      <button onClick={() => setStep(1)} className="w-full text-[10px] text-gray-500 uppercase font-bold hover:text-gray-400 mt-2">← Back to credentials</button>
                     </>
                   )}
                 </div>

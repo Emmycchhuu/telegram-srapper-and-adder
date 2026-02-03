@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+import os
 from telethon import TelegramClient
 from config import Config
 
@@ -130,6 +131,12 @@ class AccountRequest(BaseModel):
     api_id: str
     api_hash: str
 
+@app.on_event("startup")
+async def startup_event():
+    if not os.path.exists("sessions"):
+        os.makedirs("sessions")
+    state.add_log("INFO", "Engine starting up in cloud environment...")
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
@@ -218,4 +225,5 @@ async def get_status():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
