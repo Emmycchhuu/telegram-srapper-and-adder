@@ -154,7 +154,11 @@ export default function Dashboard() {
 
     try {
       // 1. Start the scrape job
-      const res = await fetch(`${API_BASE}/scrape?phone=${phone}&group_link=${sourceGroup}`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/scrape`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, group_link: sourceGroup })
+      });
       const data = await res.json();
 
       if (!res.ok) {

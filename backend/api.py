@@ -167,6 +167,10 @@ class VerifyRequest(BaseModel):
     phone: str
     code: str
 
+class ScrapeRequest(BaseModel):
+    phone: str
+    group_link: str
+
 @app.on_event("startup")
 async def startup_event():
     if not os.path.exists("sessions"):
@@ -246,12 +250,12 @@ async def websocket_endpoint(websocket: WebSocket):
             state.websockets.remove(websocket)
 
 @app.post("/scrape")
-async def scrape_members(phone: str, group_link: str):
-    if phone not in worker_pool.workers:
+async def scrape_members(req: ScrapeRequest):
+    if req.phone not in worker_pool.workers:
         raise HTTPException(status_code=400, detail="Worker not authenticated")
     
     # Run in background
-    asyncio.create_task(background_scrape(phone, group_link))
+    asyncio.create_task(background_scrape(req.phone, req.group_link))
     return {"status": "started", "message": "Scraping started in background"}
 
 async def background_scrape(phone: str, group_link: str):
