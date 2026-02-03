@@ -131,6 +131,10 @@ class AccountRequest(BaseModel):
     api_id: str
     api_hash: str
 
+class VerifyRequest(BaseModel):
+    phone: str
+    code: str
+
 @app.on_event("startup")
 async def startup_event():
     if not os.path.exists("sessions"):
@@ -153,17 +157,18 @@ async def send_code(req: AccountRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/auth/verify")
-async def verify_code(phone: str, code: str):
-    if phone not in state.active_sessions:
-        raise HTTPException(status_code=400, detail="Session not found")
+async def verify_code(req: VerifyRequest):
+    if req.phone not in state.active_sessions:
+        raise HTTPException(status_code=400, detail="Session not found. Try sending the code again.")
     
-    client = state.active_sessions[phone]
+    client = state.active_sessions[req.phone]
     try:
-        await client.sign_in(phone, code)
+        await client.sign_in(req.phone, req.code)
         me = await client.get_me()
-        await worker_pool.add_worker(phone, client)
+        await worker_pool.add_worker(req.phone, client)
         return {"status": "authenticated", "user": me.username}
     except Exception as e:
+        state.add_log("ERROR", f"Verification failed: {str(e)}", req.phone)
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.websocket("/ws/logs")

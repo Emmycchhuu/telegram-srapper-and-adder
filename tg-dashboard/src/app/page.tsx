@@ -83,10 +83,21 @@ export default function Dashboard() {
   };
 
   const handleVerify = async () => {
+    setErrorPrompt(null);
     try {
-      const res = await fetch(`${API_BASE}/auth/verify?phone=${phone}&code=${otp}`, { method: "POST" });
-      if (res.ok) setIsAuth(true);
+      const res = await fetch(`${API_BASE}/auth/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, code: otp })
+      });
+      if (res.ok) {
+        setIsAuth(true);
+      } else {
+        const err = await res.json();
+        setErrorPrompt(err.detail || "Authentication failed. Check your code.");
+      }
     } catch (e) {
+      setErrorPrompt("Connection Error during verification.");
       console.error(e);
     }
   };
